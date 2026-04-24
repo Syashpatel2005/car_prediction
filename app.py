@@ -5,7 +5,7 @@ import seaborn as sns
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.pipeline import Pipeline
+from sklearn.model_selection import train_test_split
 
 # -------------------------------
 # PAGE CONFIG
@@ -23,13 +23,7 @@ st.markdown("""
 # -------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("CAR DETAILS.csv")
-
-    # Feature Engineering
-    df['brand'] = df['name'].apply(lambda x: x.split()[0])
-    df['car_age'] = 2024 - df['year']
-
-    return df
+    return pd.read_csv("CAR DETAILS.csv")
 
 df = load_data()
 
@@ -40,26 +34,33 @@ st.header("Exploratory Data Analysis")
 
 col1, col2 = st.columns(2)
 
+# Price Distribution
 with col1:
     fig1, ax1 = plt.subplots()
     sns.histplot(df["selling_price"], bins=50, kde=True, ax=ax1)
     ax1.set_title("Selling Price Distribution")
     st.pyplot(fig1)
 
+# Fuel Type Count
 with col2:
     fig2, ax2 = plt.subplots()
     sns.countplot(x="fuel", data=df, ax=ax2)
     ax2.set_title("Fuel Type Distribution")
     st.pyplot(fig2)
 
+# -------------------------------
+# SECOND ROW
+# -------------------------------
 col3, col4 = st.columns(2)
 
+# Transmission
 with col3:
     fig3, ax3 = plt.subplots()
     sns.countplot(x="transmission", data=df, ax=ax3)
     ax3.set_title("Transmission Type")
     st.pyplot(fig3)
 
+# Owner
 with col4:
     fig4, ax4 = plt.subplots()
     sns.countplot(x="owner", data=df, ax=ax4)
@@ -67,7 +68,7 @@ with col4:
     st.pyplot(fig4)
 
 # -------------------------------
-# HEATMAP
+# CORRELATION HEATMAP
 # -------------------------------
 st.subheader("Correlation Heatmap")
 
@@ -78,43 +79,26 @@ sns.heatmap(numeric_df.corr(), annot=True, cmap="coolwarm", ax=ax5)
 st.pyplot(fig5)
 
 # -------------------------------
-# MODEL TRAINING
+# MODEL TRAINING (UNCHANGED)
 # -------------------------------
-@st.cache_resource
-def train_model(df):
-    # Create training dataframe
-    train_df = df.copy()
+X = df.drop('selling_price', axis=1)
+y = df['selling_price']
 
-    # Drop original name (we use brand)
-    train_df = train_df.drop(['name'], axis=1)
+categorical_columns = ['name', 'fuel', 'seller_type', 'transmission', 'owner']
 
-    X = train_df.drop('selling_price', axis=1)
-    y = train_df['selling_price']
+preprocessor = ColumnTransformer(
+    transformers=[('encoder', OneHotEncoder(), categorical_columns)],
+    remainder='passthrough'
+)
 
-    categorical_columns = ['brand', 'fuel', 'seller_type', 'transmission', 'owner']
+X_encoded = preprocessor.fit_transform(X)
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_columns)
-        ],
-        remainder='passthrough'
-    )
+X_train, X_test, y_train, y_test = train_test_split(
+    X_encoded, y, test_size=0.2, random_state=42
+)
 
-    model = RandomForestRegressor(
-        n_estimators=200,
-        random_state=42
-    )
-
-    pipeline = Pipeline([
-        ('preprocessor', preprocessor),
-        ('model', model)
-    ])
-
-    pipeline.fit(X, y)
-
-    return pipeline
-
-model = train_model(df)
+model = RandomForestRegressor()
+model.fit(X_train, y_train)
 
 # -------------------------------
 # PREDICTION SECTION
@@ -123,37 +107,23 @@ st.header("Car Price Prediction")
 
 st.sidebar.header("Enter Car Details")
 
-# 👇 KEEP ORIGINAL INPUT STYLE (IMPORTANT FIX)
-name = st.sidebar.selectbox("Car Name", df['name'].unique())
-year = st.sidebar.number_input("Year", min_value=1990, max_value=2024, value=2015)
-km_driven = st.sidebar.number_input("KM Driven", value=50000)
-fuel = st.sidebar.selectbox("Fuel", df['fuel'].unique())
-seller_type = st.sidebar.selectbox("Seller Type", df['seller_type'].unique())
-transmission = st.sidebar.selectbox("Transmission", df['transmission'].unique())
-owner = st.sidebar.selectbox("Owner", df['owner'].unique())
+user_input = {}
 
-# Convert input → model format
-brand = name.split()[0]
-car_age = 2024 - year
+for column in X.columns:
+    if column in categorical_columns:
+        user_input[column] = st.sidebar.selectbox(column, df[column].unique())
+    else:
+        user_input[column] = st.sidebar.number_input(column, value=0)
 
-input_df = pd.DataFrame({
-    'brand': [brand],
-    'fuel': [fuel],
-    'seller_type': [seller_type],
-    'transmission': [transmission],
-    'owner': [owner],
-    'km_driven': [km_driven],
-    'car_age': [car_age]
-})
+input_df = pd.DataFrame(user_input, index=[0])
 
 st.subheader("Input Data")
 st.dataframe(input_df)
 
-# -------------------------------
-# PREDICT
-# -------------------------------
 if st.button("Predict Price"):
-    prediction = model.predict(input_df)
+    input_encoded = preprocessor.transform(input_df)
+    prediction = model.predict(input_encoded)
+
     st.success(f"Estimated Price: ₹ {int(prediction[0]):,}")
 
 # -------------------------------
@@ -161,11 +131,8 @@ if st.button("Predict Price"):
 # -------------------------------
 st.subheader("Feature Importance")
 
-rf_model = model.named_steps['model']
-preprocessor = model.named_steps['preprocessor']
-
+importances = model.feature_importances_
 feature_names = preprocessor.get_feature_names_out()
-importances = rf_model.feature_importances_
 
 feat_df = pd.DataFrame({
     "Feature": feature_names,
@@ -181,4 +148,3 @@ st.pyplot(fig6)
 # FOOTER
 # -------------------------------
 st.markdown("---")
-st.markdown("Deployment Ready 🚀")
