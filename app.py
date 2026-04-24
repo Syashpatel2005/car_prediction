@@ -5,7 +5,8 @@ import seaborn as sns
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+import numpy as np
 
 # -------------------------------
 # PAGE CONFIG
@@ -23,7 +24,16 @@ st.markdown("""
 # -------------------------------
 @st.cache_data
 def load_data():
-    return pd.read_csv("CAR DETAILS.csv")
+    df = pd.read_csv("CAR DETAILS.csv")
+    
+    # Feature Engineering
+    df['brand'] = df['name'].apply(lambda x: x.split()[0])
+    df['car_age'] = 2024 - df['year']
+    
+    # Drop unnecessary columns
+    df = df.drop(['name', 'year'], axis=1)
+    
+    return df
 
 df = load_data()
 
@@ -79,26 +89,37 @@ sns.heatmap(numeric_df.corr(), annot=True, cmap="coolwarm", ax=ax5)
 st.pyplot(fig5)
 
 # -------------------------------
-# MODEL TRAINING (UNCHANGED)
+# MODEL TRAINING (CACHED)
 # -------------------------------
-X = df.drop('selling_price', axis=1)
-y = df['selling_price']
+@st.cache_resource
+def train_model(df):
+    X = df.drop('selling_price', axis=1)
+    y = df['selling_price']
+    
+    categorical_columns = ['brand', 'fuel', 'seller_type', 'transmission', 'owner']
+    
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_columns)
+        ],
+        remainder='passthrough'
+    )
+    
+    model = RandomForestRegressor(
+        n_estimators=200,
+        random_state=42
+    )
+    
+    pipeline = Pipeline([
+        ('preprocessor', preprocessor),
+        ('model', model)
+    ])
+    
+    pipeline.fit(X, y)
+    
+    return pipeline
 
-categorical_columns = ['name', 'fuel', 'seller_type', 'transmission', 'owner']
-
-preprocessor = ColumnTransformer(
-    transformers=[('encoder', OneHotEncoder(), categorical_columns)],
-    remainder='passthrough'
-)
-
-X_encoded = preprocessor.fit_transform(X)
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X_encoded, y, test_size=0.2, random_state=42
-)
-
-model = RandomForestRegressor()
-model.fit(X_train, y_train)
+model = train_model(df)
 
 # -------------------------------
 # PREDICTION SECTION
@@ -109,8 +130,8 @@ st.sidebar.header("Enter Car Details")
 
 user_input = {}
 
-for column in X.columns:
-    if column in categorical_columns:
+for column in df.drop('selling_price', axis=1).columns:
+    if df[column].dtype == 'object':
         user_input[column] = st.sidebar.selectbox(column, df[column].unique())
     else:
         user_input[column] = st.sidebar.number_input(column, value=0)
@@ -120,10 +141,11 @@ input_df = pd.DataFrame(user_input, index=[0])
 st.subheader("Input Data")
 st.dataframe(input_df)
 
+# -------------------------------
+# PREDICT BUTTON
+# -------------------------------
 if st.button("Predict Price"):
-    input_encoded = preprocessor.transform(input_df)
-    prediction = model.predict(input_encoded)
-
+    prediction = model.predict(input_df)
     st.success(f"Estimated Price: ₹ {int(prediction[0]):,}")
 
 # -------------------------------
@@ -131,8 +153,11 @@ if st.button("Predict Price"):
 # -------------------------------
 st.subheader("Feature Importance")
 
-importances = model.feature_importances_
+rf_model = model.named_steps['model']
+preprocessor = model.named_steps['preprocessor']
+
 feature_names = preprocessor.get_feature_names_out()
+importances = rf_model.feature_importances_
 
 feat_df = pd.DataFrame({
     "Feature": feature_names,
@@ -148,3 +173,4 @@ st.pyplot(fig6)
 # FOOTER
 # -------------------------------
 st.markdown("---")
+st.markdown("Developed for Deployment 🚀")
